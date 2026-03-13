@@ -1,0 +1,6 @@
+pandas
+matplotlib
+langchain
+langchain-ollama
+langgraph
+scipy
