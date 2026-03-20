@@ -36,12 +36,7 @@ For each English legal query, the system predicts the most relevant Swiss legal 
 - `scripts/inference.py`
   - Runs inference (optional eval) and writes submission CSV.
 
-## Competition Context
-
-This project targets the Kaggle competition:
-
-- LLM Agentic Legal Information Retrieval
-- Overview: https://www.kaggle.com/competitions/llm-agentic-legal-information-retrieval/overview
+## Context
 
 Problem summary:
 
