@@ -76,7 +76,7 @@ What this means for this project:
 
 ## Setup
 
-1. Create and activate a Python environment.
+1. Create and activate a Python >=3.11 environment.
 2. Install dependencies:
 
 ```bash
