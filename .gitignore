@@ -1,4 +1,10 @@
 /data
 /venv
-
+/artifacts
 __pycache__
+
+# Ignore mlflow
+mlflow.db
+
+# Ignore .vscode settings
+.vscode/

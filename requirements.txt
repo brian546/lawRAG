@@ -1,6 +1,21 @@
 pandas
 matplotlib
 langchain
+langchain-community
+langchain-huggingface
 langchain-ollama
 langgraph
+faiss-cpu
+# faiss-gpu-cu12
 scipy
+numpy
+rank-bm25
+scikit-learn
+sentence-transformers
+peft
+datasets
+accelerate>=1.1.0
+tqdm
+pyarrow
+mlflow
+polars
