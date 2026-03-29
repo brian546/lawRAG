@@ -11,37 +11,47 @@ if str(ROOT_DIR) not in sys.path:
 
 import pandas as pd
 
-from lawrag.common import Config, DataPaths, PipelineConfig, set_global_seed
+from lawrag.common import (
+    SEED,
+    Config,
+    DataPaths,
+    PipelineConfig,
+    get_config_section,
+    load_json_config,
+    resolve_options,
+    set_global_seed,
+)
 from lawrag.data import build_and_save_corpus
 from lawrag.pipeline import CitationRAGPipeline, macro_f1, macro_precision, macro_recall
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run LawRAG inference/evaluation/submission generation.")
-    parser.add_argument("--data-dir", default="data")
-    parser.add_argument("--artifact-dir", default="artifacts")
-    parser.add_argument("--submission-name", default="submission.csv")
+    parser.add_argument("--config", default=None, help="Path to shared JSON config file.")
+    parser.add_argument("--data-dir", default=None)
+    parser.add_argument("--artifact-dir", default=None)
+    parser.add_argument("--submission-name", default=None)
 
-    parser.add_argument("--restrict-to-labeled", action="store_true")
-    parser.add_argument("--enable-chunking", action="store_true")
-    parser.add_argument("--chunk-chars", type=int, default=3600)
-    parser.add_argument("--overlap-chars", type=int, default=400)
+    parser.add_argument("--restrict-to-labeled", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--enable-chunking", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--chunk-chars", type=int, default=None)
+    parser.add_argument("--overlap-chars", type=int, default=None)
 
-    parser.add_argument("--dense-model-name", default="intfloat/multilingual-e5-base")
-    parser.add_argument("--reranker-model-name", default="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
+    parser.add_argument("--dense-model-name", default=None)
+    parser.add_argument("--reranker-model-name", default=None)
     parser.add_argument("--local-dense-model-path", default=None)
     parser.add_argument("--local-reranker-model-path", default=None)
 
-    parser.add_argument("--stage-k", type=int, default=150)
-    parser.add_argument("--out-k", type=int, default=20)
-    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--stage-k", type=int, default=None)
+    parser.add_argument("--out-k", type=int, default=None)
+    parser.add_argument("--threshold", type=float, default=None)
 
-    parser.add_argument("--use-reranker", action="store_true")
-    parser.add_argument("--reranker-top-n", type=int, default=50)
-    parser.add_argument("--reranker-batch-size", type=int, default=32)
+    parser.add_argument("--use-reranker", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--reranker-top-n", type=int, default=None)
+    parser.add_argument("--reranker-batch-size", type=int, default=None)
 
-    parser.add_argument("--evaluate", action="store_true", help="Evaluate on train/val.")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--evaluate", action=argparse.BooleanOptionalAction, default=None, help="Evaluate on train/val.")
+    parser.add_argument("--seed", type=int, default=None)
     return parser.parse_args()
 
 
@@ -74,26 +84,57 @@ def auto_wire_local_models(cfg: Config) -> None:
 
 def main() -> None:
     args = parse_args()
-    set_global_seed(args.seed)
+    file_config = get_config_section(load_json_config(args.config), "inference")
+    resolved = resolve_options(
+        args,
+        file_config,
+        [
+            "data_dir",
+            "artifact_dir",
+            "submission_name",
+            "restrict_to_labeled",
+            "enable_chunking",
+            "chunk_chars",
+            "overlap_chars",
+            "dense_model_name",
+            "reranker_model_name",
+            "local_dense_model_path",
+            "local_reranker_model_path",
+            "stage_k",
+            "out_k",
+            "threshold",
+            "use_reranker",
+            "reranker_top_n",
+            "reranker_batch_size",
+            "evaluate",
+            "seed",
+            "mode",
+        ],
+    )
+
+    base_cfg = Config()
+    seed = int(resolved.get("seed", SEED))
+    set_global_seed(seed)
 
     cfg = Config(
-        data_dir=args.data_dir,
-        artifact_dir=args.artifact_dir,
-        submission_name=args.submission_name,
-        restrict_to_labeled_citations=args.restrict_to_labeled,
-        enable_chunking=args.enable_chunking,
-        chunk_chars=args.chunk_chars,
-        overlap_chars=args.overlap_chars,
-        dense_model_name=args.dense_model_name,
-        reranker_model_name=args.reranker_model_name,
-        local_dense_model_path=args.local_dense_model_path,
-        local_reranker_model_path=args.local_reranker_model_path,
-        stage_k=args.stage_k,
-        out_k=args.out_k,
-        threshold=args.threshold,
-        use_reranker=args.use_reranker,
-        reranker_top_n=args.reranker_top_n,
-        reranker_batch_size=args.reranker_batch_size,
+        data_dir=resolved.get("data_dir", base_cfg.data_dir),
+        artifact_dir=resolved.get("artifact_dir", base_cfg.artifact_dir),
+        submission_name=resolved.get("submission_name", base_cfg.submission_name),
+        restrict_to_labeled_citations=resolved.get("restrict_to_labeled", base_cfg.restrict_to_labeled_citations),
+        enable_chunking=resolved.get("enable_chunking", base_cfg.enable_chunking),
+        chunk_chars=resolved.get("chunk_chars", base_cfg.chunk_chars),
+        overlap_chars=resolved.get("overlap_chars", base_cfg.overlap_chars),
+        mode=resolved.get("mode", base_cfg.mode),
+        dense_model_name=resolved.get("dense_model_name", base_cfg.dense_model_name),
+        reranker_model_name=resolved.get("reranker_model_name", base_cfg.reranker_model_name),
+        local_dense_model_path=resolved.get("local_dense_model_path", base_cfg.local_dense_model_path),
+        local_reranker_model_path=resolved.get("local_reranker_model_path", base_cfg.local_reranker_model_path),
+        stage_k=resolved.get("stage_k", base_cfg.stage_k),
+        out_k=resolved.get("out_k", base_cfg.out_k),
+        threshold=resolved.get("threshold", base_cfg.threshold),
+        use_reranker=resolved.get("use_reranker", base_cfg.use_reranker),
+        reranker_top_n=resolved.get("reranker_top_n", base_cfg.reranker_top_n),
+        reranker_batch_size=resolved.get("reranker_batch_size", base_cfg.reranker_batch_size),
     )
 
     corpus_df, corpus_path = build_and_save_corpus(
@@ -130,7 +171,7 @@ def main() -> None:
 
     paths = DataPaths(root=Path(cfg.data_dir))
 
-    if args.evaluate:
+    if bool(resolved.get("evaluate", False)):
         train_df = pd.read_csv(paths.train)
         val_df = pd.read_csv(paths.val)
         evaluate_split(pipeline, train_df, "train")

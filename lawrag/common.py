@@ -1,15 +1,50 @@
 from __future__ import annotations
 
+import json
 import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence
 
 import numpy as np
 
 SEED = 42
 MULTISPACE_RE = re.compile(r"\s+")
+
+
+def get_project_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def load_json_config(config_path: str | Path | None = None) -> dict[str, Any]:
+    path = Path(config_path) if config_path is not None else get_project_root() / "config.json"
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def get_config_section(config: dict[str, Any], section: str) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    shared = config.get("shared", {})
+    section_data = config.get(section, {})
+    if isinstance(shared, dict):
+        merged.update(shared)
+    if isinstance(section_data, dict):
+        merged.update(section_data)
+    return merged
+
+
+def resolve_options(cli_args: object, defaults: dict[str, Any], keys: Sequence[str]) -> dict[str, Any]:
+    resolved: dict[str, Any] = {}
+    for key in keys:
+        cli_value = getattr(cli_args, key, None)
+        if cli_value is not None:
+            resolved[key] = cli_value
+        elif key in defaults:
+            resolved[key] = defaults[key]
+    return resolved
 
 
 def set_global_seed(seed: int = SEED) -> None:
