@@ -18,7 +18,6 @@ from lawrag.common import (
     PipelineConfig,
     get_config_section,
     load_json_config,
-    resolve_options,
     set_global_seed,
 )
 from lawrag.data import build_and_save_corpus
@@ -27,31 +26,7 @@ from lawrag.pipeline import CitationRAGPipeline, macro_f1, macro_precision, macr
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run LawRAG inference/evaluation/submission generation.")
-    parser.add_argument("--config", default=None, help="Path to shared JSON config file.")
-    parser.add_argument("--data-dir", default=None)
-    parser.add_argument("--artifact-dir", default=None)
-    parser.add_argument("--submission-name", default=None)
-
-    parser.add_argument("--restrict-to-labeled", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--enable-chunking", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--chunk-chars", type=int, default=None)
-    parser.add_argument("--overlap-chars", type=int, default=None)
-
-    parser.add_argument("--dense-model-name", default=None)
-    parser.add_argument("--reranker-model-name", default=None)
-    parser.add_argument("--local-dense-model-path", default=None)
-    parser.add_argument("--local-reranker-model-path", default=None)
-
-    parser.add_argument("--stage-k", type=int, default=None)
-    parser.add_argument("--out-k", type=int, default=None)
-    parser.add_argument("--threshold", type=float, default=None)
-
-    parser.add_argument("--use-reranker", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--reranker-top-n", type=int, default=None)
-    parser.add_argument("--reranker-batch-size", type=int, default=None)
-
-    parser.add_argument("--evaluate", action=argparse.BooleanOptionalAction, default=None, help="Evaluate on train/val.")
-    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--config", default=None, help="Path to JSON config file.")
     return parser.parse_args()
 
 
@@ -84,58 +59,34 @@ def auto_wire_local_models(cfg: Config) -> None:
 
 def main() -> None:
     args = parse_args()
-    file_config = get_config_section(load_json_config(args.config), "inference")
-    resolved = resolve_options(
-        args,
-        file_config,
-        [
-            "data_dir",
-            "artifact_dir",
-            "submission_name",
-            "restrict_to_labeled",
-            "enable_chunking",
-            "chunk_chars",
-            "overlap_chars",
-            "dense_model_name",
-            "reranker_model_name",
-            "local_dense_model_path",
-            "local_reranker_model_path",
-            "stage_k",
-            "out_k",
-            "threshold",
-            "use_reranker",
-            "reranker_top_n",
-            "reranker_batch_size",
-            "evaluate",
-            "seed",
-            "mode",
-        ],
-    )
+    shared_config = get_config_section(load_json_config(args.config), "shared")
+    inference_config = get_config_section(load_json_config(args.config), "inference")
 
-    base_cfg = Config()
-    seed = int(resolved.get("seed", SEED))
+    seed = int(shared_config.get("seed", SEED))
     set_global_seed(seed)
 
     cfg = Config(
-        data_dir=resolved.get("data_dir", base_cfg.data_dir),
-        artifact_dir=resolved.get("artifact_dir", base_cfg.artifact_dir),
-        submission_name=resolved.get("submission_name", base_cfg.submission_name),
-        restrict_to_labeled_citations=resolved.get("restrict_to_labeled", base_cfg.restrict_to_labeled_citations),
-        enable_chunking=resolved.get("enable_chunking", base_cfg.enable_chunking),
-        chunk_chars=resolved.get("chunk_chars", base_cfg.chunk_chars),
-        overlap_chars=resolved.get("overlap_chars", base_cfg.overlap_chars),
-        mode=resolved.get("mode", base_cfg.mode),
-        dense_model_name=resolved.get("dense_model_name", base_cfg.dense_model_name),
-        reranker_model_name=resolved.get("reranker_model_name", base_cfg.reranker_model_name),
-        local_dense_model_path=resolved.get("local_dense_model_path", base_cfg.local_dense_model_path),
-        local_reranker_model_path=resolved.get("local_reranker_model_path", base_cfg.local_reranker_model_path),
-        stage_k=resolved.get("stage_k", base_cfg.stage_k),
-        out_k=resolved.get("out_k", base_cfg.out_k),
-        threshold=resolved.get("threshold", base_cfg.threshold),
-        use_reranker=resolved.get("use_reranker", base_cfg.use_reranker),
-        reranker_top_n=resolved.get("reranker_top_n", base_cfg.reranker_top_n),
-        reranker_batch_size=resolved.get("reranker_batch_size", base_cfg.reranker_batch_size),
+        data_dir=shared_config.get("data_dir", "data"),
+        artifact_dir=shared_config.get("artifact_dir", "artifacts"),
+        submission_name=inference_config.get("submission_name", "submission.csv"),
+        restrict_to_labeled_citations=inference_config.get("restrict_to_labeled", False),
+        enable_chunking=inference_config.get("enable_chunking", False),
+        chunk_chars=inference_config.get("chunk_chars", 3600),
+        overlap_chars=inference_config.get("overlap_chars", 400),
+        mode=inference_config.get("mode", "dense"),
+        dense_model_name=inference_config.get("dense_model_name", "intfloat/multilingual-e5-base"),
+        reranker_model_name=inference_config.get("reranker_model_name", "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"),
+        local_dense_model_path=inference_config.get("local_dense_model_path"),
+        local_reranker_model_path=inference_config.get("local_reranker_model_path"),
+        stage_k=inference_config.get("stage_k", 150),
+        out_k=inference_config.get("out_k", 20),
+        threshold=inference_config.get("threshold", 0.5),
+        use_reranker=inference_config.get("use_reranker", False),
+        reranker_top_n=inference_config.get("reranker_top_n", 50),
+        reranker_batch_size=inference_config.get("reranker_batch_size", 32),
     )
+
+    evaluate = inference_config.get("evaluate", False)
 
     corpus_df, corpus_path = build_and_save_corpus(
         config_data_dir=cfg.data_dir,
@@ -171,7 +122,7 @@ def main() -> None:
 
     paths = DataPaths(root=Path(cfg.data_dir))
 
-    if bool(resolved.get("evaluate", False)):
+    if bool(evaluate):
         train_df = pd.read_csv(paths.train)
         val_df = pd.read_csv(paths.val)
         evaluate_split(pipeline, train_df, "train")

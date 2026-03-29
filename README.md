@@ -47,16 +47,18 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 ```
 
-
 ### 📤 2) Generate submission (inference)
 
+Edit `config.json` to set inference parameters, then run:
+
 ```bash
-uv run scripts/inference.py \
-  --data-dir data \
-  --artifact-dir artifacts \
-  --submission-name submission.csv \
-  --restrict-to-labeled \
-  --use-reranker
+uv run scripts/inference.py
+```
+
+Or use a custom config:
+
+```bash
+uv run scripts/inference.py --config path/to/custom.json
 ```
 
 Output:
@@ -65,58 +67,56 @@ Output:
 
 ### 📊 3) Optional train/val evaluation
 
+Set `"evaluate": true` in config.json under the `inference` section, then run:
+
 ```bash
-uv run scripts/inference.py \
-  --data-dir data \
-  --artifact-dir artifacts \
-  --submission-name submission_eval.csv \
-  --restrict-to-labeled \
-  --use-reranker \
-  --evaluate
+uv run scripts/inference.py
 ```
 
 ## 🧠 Fine-Tuning (Optional)
 
-Run dense + reranker fine-tuning:
+Configure `config.json` in the `fine_tune` section, then run:
 
 ```bash
-uv run scripts/fine_tune.py \
-  --data-dir data \
-  --artifact-dir artifacts \
-  --restrict-to-labeled \
-  --dense-output-dir artifacts/models/dense_ft \
-  --reranker-output-dir artifacts/models/reranker_ft
+uv run scripts/fine_tune.py
 ```
 
-Common variants:
+Common configurations:
 
-```bash
-# Dense only
-uv run scripts/fine_tune.py --data-dir data --restrict-to-labeled --skip-reranker
+```json
+// config.json - dense only
+"fine_tune": {
+  "skip_reranker": true,
+  ...
+}
 
-# Reranker only
-uv run scripts/fine_tune.py --data-dir data --restrict-to-labeled --skip-dense
+// config.json - reranker only
+"fine_tune": {
+  "skip_dense": true,
+  ...
+}
 
-# QLoRA mode
-uv run scripts/fine_tune.py --data-dir data --restrict-to-labeled --adapter-mode qlora
+// config.json - QLoRA mode
+"fine_tune": {
+  "adapter_mode": "qlora",
+  ...
+}
 
-# Smoke test without training
-uv run scripts/fine_tune.py --data-dir data --restrict-to-labeled --disable-lora --skip-dense --skip-reranker
+// config.json - smoke test (no training)
+"fine_tune": {
+  "disable_lora": true,
+  "skip_dense": true,
+  "skip_reranker": true,
+  ...
+}
 ```
 
 ## 🔬 Sweep (Optional)
 
-Run stage_k/out_k sweep with MLflow:
+Configure `config.json` in the `sweep` section with `stage_k_values`, `out_k_values`, and MLflow settings, then run:
 
 ```bash
-uv run scripts/sweep.py \
-  --data-dir data \
-  --artifact-dir artifacts \
-  --use-reranker \
-  --stage-k-values 100,150 \
-  --out-k-values 8,12 \
-  --mlflow-tracking-uri http://127.0.0.1:5000 \
-  --mlflow-experiment lawrag-dense-sweep
+uv run scripts/sweep.py
 ```
 
 ## 🗂️ Configuration
@@ -125,19 +125,19 @@ All scripts load default settings from `config.json` at the project root. Any CL
 
 The file is split into four top-level sections:
 
-| Section | Consumed by |
-|---------|-------------|
-| `shared` | all scripts — sets `data_dir`, `artifact_dir`, and `seed` |
-| `inference` | `scripts/inference.py` |
-| `fine_tune` | `scripts/fine_tune.py` |
-| `sweep` | `scripts/sweep.py` |
+| Section     | Consumed by                                               |
+| ----------- | --------------------------------------------------------- |
+| `shared`    | all scripts — sets `data_dir`, `artifact_dir`, and `seed` |
+| `inference` | `scripts/inference.py`                                    |
+| `fine_tune` | `scripts/fine_tune.py`                                    |
+| `sweep`     | `scripts/sweep.py`                                        |
 
 Annotated defaults:
 
 ```json
 {
   "shared": {
-    "data_dir": "data",          // input dataset directory
+    "data_dir": "data", // input dataset directory
     "artifact_dir": "artifacts", // output root for models, corpora, submissions
     "seed": 42
   },
@@ -149,10 +149,10 @@ Annotated defaults:
     "overlap_chars": 400,
     "dense_model_name": "intfloat/multilingual-e5-base",
     "reranker_model_name": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
-    "local_dense_model_path": null,    // set to override with a fine-tuned artifact
+    "local_dense_model_path": null, // set to override with a fine-tuned artifact
     "local_reranker_model_path": null, // set to override with a fine-tuned artifact
-    "stage_k": 150,       // dense retrieval candidate pool size
-    "out_k": 20,          // final top-k predictions
+    "stage_k": 150, // dense retrieval candidate pool size
+    "out_k": 20, // final top-k predictions
     "threshold": 0.5,
     "use_reranker": false,
     "reranker_top_n": 50,
@@ -175,7 +175,7 @@ Annotated defaults:
     "save_steps": 100,
     "save_total_limit": 2,
     "negatives_per_query": 3,
-    "adapter_mode": "lora",          // "lora" or "qlora"
+    "adapter_mode": "lora", // "lora" or "qlora"
     "lora_r": 16,
     "lora_alpha": 32,
     "lora_dropout": 0.05,
@@ -202,55 +202,6 @@ Annotated defaults:
 ```
 
 Pass `--config path/to/custom.json` to any script to use an alternative config file.
-
-## ⚙️ Key CLI Options
-
-All scripts read their default settings from `config.json` in the project root. CLI flags override the JSON values when provided.
-
-### `scripts/inference.py`
-
-- `--config`: Optional path to a JSON config file. Defaults to the repository-level `config.json`.
-- `--data-dir`: Path to the input dataset directory containing train/val/test CSV files.
-- `--artifact-dir`: Directory where generated corpus files, cached artifacts, and submissions are written.
-- `--submission-name`: Output filename for the generated submission CSV inside the artifact directory.
-- `--restrict-to-labeled`: Restrict retrieval candidates to citations seen in labeled training data.
-- `--enable-chunking`: Split long legal documents into chunks before indexing them for retrieval.
-- `--chunk-chars`: Maximum character length for each chunk when chunking is enabled.
-- `--overlap-chars`: Number of overlapping characters between adjacent chunks to preserve context.
-- `--dense-model-name`: Hugging Face model name used for dense retrieval embeddings.
-- `--reranker-model-name`: Hugging Face cross-encoder model name used for reranking.
-- `--local-dense-model-path`: Optional local path to a fine-tuned dense retriever artifact.
-- `--local-reranker-model-path`: Optional local path to a fine-tuned reranker artifact.
-- `--stage-k`: Number of initial candidates retrieved before optional reranking.
-- `--out-k`: Maximum number of citations returned as final predictions.
-- `--threshold`: Score cutoff used to filter low-confidence predictions.
-- `--use-reranker`: Enable the reranking stage after dense retrieval.
-- `--reranker-top-n`: Number of top dense candidates passed into the reranker.
-- `--reranker-batch-size`: Batch size used while scoring candidate pairs with the reranker.
-- `--evaluate`: Also compute train and validation metrics before generating the test submission.
-
-### `scripts/fine_tune.py`
-
-- `--config`: Optional path to a JSON config file. Defaults to the repository-level `config.json`.
-- `--data-dir`: Path to the dataset directory used to build training and validation pairs.
-- `--artifact-dir`: Base artifact directory used while building the training corpus.
-- `--restrict-to-labeled`: Restrict corpus construction to labeled citations only.
-- `--dense-model-name`: Base sentence-transformer model used for dense retriever fine-tuning.
-- `--reranker-model-name`: Base cross-encoder model used for reranker fine-tuning.
-- `--epochs`: Number of full passes through the fine-tuning dataset.
-- `--batch-size`: Per-step batch size used during training.
-- `--learning-rate`: Optimizer learning rate for LoRA or QLoRA fine-tuning.
-- `--warmup-ratio`: Fraction of training steps reserved for learning-rate warmup.
-- `--eval-steps`: Frequency, in training steps, for running intermediate evaluation.
-- `--save-steps`: Frequency, in training steps, for writing checkpoints.
-- `--save-total-limit`: Maximum number of checkpoints retained on disk.
-- `--negatives-per-query`: Number of negative citation examples sampled for each query.
-- `--adapter-mode {lora,qlora}`: Select whether adapters are trained with standard LoRA or QLoRA.
-- `--disable-lora`: Disable all fine-tuning stages and only run preprocessing or smoke-test setup.
-- `--dense-output-dir`: Output directory for the fine-tuned dense retriever.
-- `--reranker-output-dir`: Output directory for the fine-tuned reranker.
-- `--skip-dense`: Skip dense retriever training and only run the reranker stage.
-- `--skip-reranker`: Skip reranker training and only run the dense retriever stage.
 
 ## 📝 Notes
 
