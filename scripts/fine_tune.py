@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""Fine-tuning script for dense retriever and reranker."""
-
 from __future__ import annotations
 
 import argparse
-import logging
 from pathlib import Path
 import sys
 
@@ -14,32 +11,19 @@ if str(ROOT_DIR) not in sys.path:
 
 import pandas as pd
 
-from lawrag.common import set_seed
-from lawrag.data import DataPaths, build_unified_corpus, chunk_corpus, load_labeled_citation_set
-from lawrag.finetune import (
-    FinetuneConfig,
-    build_finetune_pairs,
-    run_dense_finetuning,
-    run_reranker_finetuning,
-)
-
-LOGGER = logging.getLogger("fine_tune")
+from lawrag.common import Config, DataPaths, FinetuneConfig, SEED, set_global_seed
+from lawrag.data import build_and_save_corpus
+from lawrag.finetune import build_finetune_pairs, finetune_dense, finetune_reranker
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fine-tune LawRAG bi-encoder and cross-encoder.")
-    parser.add_argument("--data-dir", type=Path, default=Path("data"))
+    parser = argparse.ArgumentParser(description="Fine-tune LawRAG dense retriever and reranker.")
+    parser.add_argument("--data-dir", default="data")
+    parser.add_argument("--artifact-dir", default="artifacts")
     parser.add_argument("--restrict-to-labeled", action="store_true")
-    parser.add_argument("--enable-chunking", action="store_true")
-    parser.add_argument("--chunk-chars", type=int, default=1200)
-    parser.add_argument("--overlap-chars", type=int, default=200)
-    parser.add_argument("--dense-model", type=str, default="intfloat/multilingual-e5-base")
-    parser.add_argument(
-        "--reranker-model",
-        type=str,
-        default="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
-    )
-    parser.add_argument("--seed", type=int, default=42)
+
+    parser.add_argument("--dense-model-name", default="intfloat/multilingual-e5-base")
+    parser.add_argument("--reranker-model-name", default="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
 
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=16)
@@ -48,64 +32,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-steps", type=int, default=100)
     parser.add_argument("--save-steps", type=int, default=100)
     parser.add_argument("--save-total-limit", type=int, default=2)
-
-    parser.add_argument("--disable-lora", action="store_true")
-    parser.add_argument("--lora-r", type=int, default=32)
-    parser.add_argument("--lora-alpha", type=int, default=64)
-    parser.add_argument("--lora-dropout", type=float, default=0.05)
-    parser.add_argument("--lora-bias", type=str, default="none")
-    parser.add_argument(
-        "--lora-target-modules",
-        type=str,
-        nargs="+",
-        default=["query", "key", "value", "dense"],
-    )
     parser.add_argument("--negatives-per-query", type=int, default=3)
 
-    parser.add_argument("--dense-output-dir", type=Path, default=Path("artifacts/models/dense_ft"))
-    parser.add_argument(
-        "--reranker-output-dir",
-        type=Path,
-        default=Path("artifacts/models/reranker_ft"),
-    )
+    parser.add_argument("--adapter-mode", choices=["lora", "qlora"], default="lora")
+    parser.add_argument("--disable-lora", action="store_true", help="Disable all fine-tuning stages.")
+
+    parser.add_argument("--dense-output-dir", default="artifacts/models/dense_ft")
+    parser.add_argument("--reranker-output-dir", default="artifacts/models/reranker_ft")
+
     parser.add_argument("--skip-dense", action="store_true")
     parser.add_argument("--skip-reranker", action="store_true")
+    parser.add_argument("--seed", type=int, default=SEED)
     return parser.parse_args()
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
     args = parse_args()
-    set_seed(args.seed)
+    set_global_seed(args.seed)
 
-    paths = DataPaths(root=args.data_dir)
-
-    allowed = load_labeled_citation_set(paths) if args.restrict_to_labeled else None
-    corpus_df = build_unified_corpus(paths, allowed_citations=allowed)
-    if args.enable_chunking:
-        corpus_df = chunk_corpus(
-            corpus_df,
-            chunk_chars=args.chunk_chars,
-            overlap_chars=args.overlap_chars,
-        )
-
-    train_df = pd.read_csv(paths.train)
-    val_df = pd.read_csv(paths.val)
-
-    train_bi, train_ce = build_finetune_pairs(
-        train_df,
-        corpus_df,
-        negatives_per_query=args.negatives_per_query,
-        seed=args.seed,
-    )
-    val_bi, val_ce = build_finetune_pairs(
-        val_df,
-        corpus_df,
-        negatives_per_query=args.negatives_per_query,
-        seed=args.seed + 1,
+    cfg = Config(
+        data_dir=args.data_dir,
+        artifact_dir=args.artifact_dir,
+        restrict_to_labeled_citations=args.restrict_to_labeled,
+        dense_model_name=args.dense_model_name,
+        reranker_model_name=args.reranker_model_name,
+        local_dense_model_path=None,
+        local_reranker_model_path=None,
     )
 
-    cfg = FinetuneConfig(
+    ft_cfg = FinetuneConfig(
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
@@ -113,44 +68,69 @@ def main() -> None:
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
-        use_lora=not args.disable_lora,
-        lora_r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        lora_bias=args.lora_bias,
-        lora_target_modules=args.lora_target_modules,
+        adapter_mode=args.adapter_mode,
         negatives_per_query=args.negatives_per_query,
-        dense_output_dir=str(args.dense_output_dir),
-        reranker_output_dir=str(args.reranker_output_dir),
+        dense_output_dir=args.dense_output_dir,
+        reranker_output_dir=args.reranker_output_dir,
         run_dense_finetune=not args.skip_dense,
         run_reranker_finetune=not args.skip_reranker,
     )
 
-    if cfg.run_dense_finetune:
-        LOGGER.info("Fine-tuning dense retriever with %d train pairs", len(train_bi))
-        dense_path = run_dense_finetuning(
-            cfg,
-            dense_model_ref=args.dense_model,
-            train_pairs=train_bi,
-            val_pairs=val_bi,
-            seed=args.seed,
-        )
-        LOGGER.info("Saved dense model to %s", dense_path)
-    else:
-        LOGGER.info("Skipping dense fine-tuning")
+    if args.disable_lora:
+        ft_cfg.run_dense_finetune = False
+        ft_cfg.run_reranker_finetune = False
 
-    if cfg.run_reranker_finetune:
-        LOGGER.info("Fine-tuning reranker with %d train pairs", len(train_ce))
-        reranker_path = run_reranker_finetuning(
-            cfg,
-            reranker_model_ref=args.reranker_model,
-            train_pairs=train_ce,
-            val_pairs=val_ce,
+    corpus_df, corpus_path = build_and_save_corpus(
+        config_data_dir=cfg.data_dir,
+        artifact_dir=cfg.artifact_dir,
+        restrict_to_labeled=cfg.restrict_to_labeled_citations,
+        enable_chunking=False,
+        chunk_chars=3600,
+        overlap_chars=400,
+    )
+    print(f"Saved corpus for training: {corpus_path}")
+
+    paths = DataPaths(root=Path(cfg.data_dir))
+    train_df = pd.read_csv(paths.train)
+    val_df = pd.read_csv(paths.val)
+
+    bi_pairs, ce_pairs = build_finetune_pairs(
+        train_df=train_df,
+        corpus_df=corpus_df,
+        dense_model_ref=cfg.dense_model_name,
+        negatives_per_query=ft_cfg.negatives_per_query,
+        seed=args.seed,
+    )
+    val_bi_pairs, val_ce_pairs = build_finetune_pairs(
+        train_df=val_df,
+        corpus_df=corpus_df,
+        dense_model_ref=cfg.dense_model_name,
+        negatives_per_query=ft_cfg.negatives_per_query,
+        seed=args.seed + 1,
+    )
+
+    print(f"Train bi-pairs: {len(bi_pairs):,}, train ce-pairs: {len(ce_pairs):,}")
+    print(f"Val bi-pairs  : {len(val_bi_pairs):,}, val ce-pairs  : {len(val_ce_pairs):,}")
+
+    if ft_cfg.run_dense_finetune:
+        dense_out = finetune_dense(
+            bi_pairs=bi_pairs,
+            val_bi_pairs=val_bi_pairs,
+            dense_model_ref=cfg.dense_model_name,
+            ft_cfg=ft_cfg,
             seed=args.seed,
         )
-        LOGGER.info("Saved reranker model to %s", reranker_path)
-    else:
-        LOGGER.info("Skipping reranker fine-tuning")
+        print(f"Saved dense model to: {dense_out}")
+
+    if ft_cfg.run_reranker_finetune:
+        reranker_out = finetune_reranker(
+            ce_pairs=ce_pairs,
+            val_ce_pairs=val_ce_pairs,
+            reranker_model_ref=cfg.reranker_model_name,
+            ft_cfg=ft_cfg,
+            seed=args.seed,
+        )
+        print(f"Saved reranker model to: {reranker_out}")
 
 
 if __name__ == "__main__":

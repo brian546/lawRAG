@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,6 +8,15 @@ from typing import Dict, List, Optional
 import pandas as pd
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
+
+
+@dataclass
+class RetrievalResult:
+    citation: str
+    doc_id: str
+    score: float
+    source: str
+    text: str
 
 
 def _is_local_adapter_dir(model_name_or_path: str) -> bool:
@@ -26,33 +37,23 @@ def _get_base_model_from_adapter(adapter_dir: str) -> Optional[str]:
 def load_sentence_transformer(model_name_or_path: str):
     from sentence_transformers import SentenceTransformer
 
-    if not _is_local_adapter_dir(model_name_or_path):
-        return SentenceTransformer(model_name_or_path)
+    default_model = lambda: SentenceTransformer(model_name_or_path, trust_remote_code=True)
 
-    # Prefer direct local loading first; many fine-tuned exports are complete
-    # sentence-transformers bundles and do not require resolving a remote base model.
-    try:
-        return SentenceTransformer(model_name_or_path, local_files_only=True)
-    except Exception:
-        pass
+    if not _is_local_adapter_dir(model_name_or_path):
+        return default_model()
 
     base_ref = _get_base_model_from_adapter(model_name_or_path)
     if not base_ref:
-        return SentenceTransformer(model_name_or_path)
+        return default_model()
 
     from peft import PeftModel
 
-    model = SentenceTransformer(base_ref)
-    transformer_module = model._first_module()
-    auto_model = getattr(transformer_module, "auto_model", None)
-    if auto_model is None:
-        return SentenceTransformer(model_name_or_path)
+    model = SentenceTransformer(base_ref, trust_remote_code=True)
+    auto_model = model._first_module().auto_model  # pyright: ignore[reportPrivateUsage]
 
     peft_model = PeftModel.from_pretrained(auto_model, model_name_or_path)
     if hasattr(peft_model, "merge_and_unload"):
-        transformer_module.auto_model = peft_model.merge_and_unload()
-    else:
-        transformer_module.auto_model = peft_model
+        _ = peft_model.merge_and_unload()
     return model
 
 
@@ -62,19 +63,13 @@ def load_cross_encoder(model_name_or_path: str):
     if not _is_local_adapter_dir(model_name_or_path):
         return CrossEncoder(model_name_or_path)
 
-    # Prefer direct local loading first for offline-safe execution.
-    try:
-        return CrossEncoder(model_name_or_path, local_files_only=True)
-    except Exception:
-        pass
-
     base_ref = _get_base_model_from_adapter(model_name_or_path)
     if not base_ref:
         return CrossEncoder(model_name_or_path)
 
     from peft import PeftModel
 
-    model = CrossEncoder(base_ref)
+    model = CrossEncoder(base_ref, num_labels=1)
     peft_model = PeftModel.from_pretrained(model.model, model_name_or_path)
     if hasattr(peft_model, "merge_and_unload"):
         model.model = peft_model.merge_and_unload()
@@ -83,34 +78,17 @@ def load_cross_encoder(model_name_or_path: str):
     return model
 
 
-@dataclass
-class RetrievalResult:
-    citation: str
-    doc_id: str
-    score: float
-    source: str
-    text: str
-
-
 class FaissCitationRetriever:
     class _SentenceTransformerEmbeddings(Embeddings):
         def __init__(self, model_name_or_path: str):
             self.model = load_sentence_transformer(model_name_or_path)
 
         def embed_documents(self, texts: List[str]) -> List[List[float]]:
-            emb = self.model.encode(
-                texts,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            )
+            emb = self.model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
             return emb.tolist()
 
         def embed_query(self, text: str) -> List[float]:
-            emb = self.model.encode(
-                [text],
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            )
+            emb = self.model.encode([text], normalize_embeddings=True, show_progress_bar=False)
             return emb[0].tolist()
 
     def __init__(self, corpus_df: pd.DataFrame, model_name_or_path: str):
@@ -138,7 +116,7 @@ class FaissCitationRetriever:
         return 1.0 / (1.0 + max(float(distance), 0.0))
 
     def search(self, query: str, topk: int = 20) -> List[RetrievalResult]:
-        out: List[RetrievalResult] = []
+        out: list[RetrievalResult] = []
         docs_and_dist = self.vectorstore.similarity_search_with_score(query, k=topk)
         for doc, dist in docs_and_dist:
             out.append(
@@ -153,56 +131,40 @@ class FaissCitationRetriever:
         return out
 
 
-def aggregate_results_by_citation(
-    results: List[RetrievalResult],
-    score_agg: str = "max",
-    topk: Optional[int] = None,
-) -> List[RetrievalResult]:
+def aggregate_results_by_citation(results: List[RetrievalResult], topk: Optional[int] = None) -> List[RetrievalResult]:
     grouped: Dict[str, List[RetrievalResult]] = {}
     for rec in results:
         grouped.setdefault(rec.citation, []).append(rec)
 
-    aggregated = []
+    aggregated: list[RetrievalResult] = []
     for citation, recs in grouped.items():
-        best_rec = max(recs, key=lambda item: item.score)
-        if score_agg == "mean":
-            score = float(sum(item.score for item in recs) / len(recs))
-        else:
-            score = float(best_rec.score)
-
+        max_text_rec = max(recs, key=lambda r: r.score)
         aggregated.append(
             RetrievalResult(
                 citation=citation,
-                doc_id=best_rec.doc_id,
-                score=score,
-                source=best_rec.source,
-                text=best_rec.text,
+                doc_id=max_text_rec.doc_id,
+                score=float(max_text_rec.score),
+                source=max_text_rec.source,
+                text=max_text_rec.text,
             )
         )
 
-    aggregated.sort(key=lambda item: item.score, reverse=True)
-    if topk is None:
-        return aggregated
-    return aggregated[:topk]
+    aggregated.sort(key=lambda r: r.score, reverse=True)
+    return aggregated if topk is None else aggregated[:topk]
 
 
 class CrossEncoderCitationReranker:
     def __init__(self, model_name_or_path: str):
         self.model = load_cross_encoder(model_name_or_path)
 
-    def rerank(
-        self,
-        query: str,
-        candidates: List[RetrievalResult],
-        batch_size: int = 32,
-    ) -> List[RetrievalResult]:
+    def rerank(self, query: str, candidates: List[RetrievalResult], batch_size: int = 32) -> List[RetrievalResult]:
         if not candidates:
             return []
 
         pairs = [(query, candidate.text) for candidate in candidates]
         scores = self.model.predict(pairs, batch_size=batch_size, show_progress_bar=False)
 
-        rescored = []
+        rescored: list[RetrievalResult] = []
         for candidate, score in zip(candidates, scores):
             rescored.append(
                 RetrievalResult(
@@ -214,5 +176,5 @@ class CrossEncoderCitationReranker:
                 )
             )
 
-        rescored.sort(key=lambda item: item.score, reverse=True)
+        rescored.sort(key=lambda r: r.score, reverse=True)
         return rescored

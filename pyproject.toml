@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lawRAG"
+version = "0.1.0"
+description = "Legal document retrieval with dense and reranking models"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas",
+    "matplotlib",
+    "langchain",
+    "langchain-community",
+    "langchain-huggingface",
+    "langchain-ollama",
+    "langgraph",
+    "faiss-cpu",
+    "scipy",
+    "numpy",
+    "rank-bm25",
+    "scikit-learn",
+    "sentence-transformers",
+    "peft",
+    "bitsandbytes",
+    "datasets",
+    "accelerate>=1.1.0",
+    "tqdm",
+    "pyarrow",
+    "mlflow",
+    "polars",
+    "einops",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "faiss-gpu-cu12",
+]
